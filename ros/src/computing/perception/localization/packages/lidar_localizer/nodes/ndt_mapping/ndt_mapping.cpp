@@ -668,7 +668,7 @@ static void points_callback(const sensor_msgs::PointCloud2::ConstPtr& input)
 
   if (_method_type == MethodType::PCL_GENERIC)
   {
-    ndt.align(*output_cloud, init_guess);
+    ndt.align(*output_cloud, init_guess);  // pcl::aligin 需传入转换后的点云(容器),估计变换
     fitness_score = ndt.getFitnessScore();
     t_localizer = ndt.getFinalTransformation();
     has_converged = ndt.hasConverged();
@@ -677,7 +677,7 @@ static void points_callback(const sensor_msgs::PointCloud2::ConstPtr& input)
   }
   else if (_method_type == MethodType::PCL_ANH)
   {
-    anh_ndt.align(init_guess);
+    anh_ndt.align(init_guess);            // cpu::align 只需要传入估计变换 --建图的时候传入估计变换,定位matching的时候传入空的单位Eigen
     fitness_score = anh_ndt.getFitnessScore();
     t_localizer = anh_ndt.getFinalTransformation();
     has_converged = anh_ndt.hasConverged();
@@ -686,7 +686,7 @@ static void points_callback(const sensor_msgs::PointCloud2::ConstPtr& input)
 #ifdef CUDA_FOUND
   else if (_method_type == MethodType::PCL_ANH_GPU)
   {
-    anh_gpu_ndt.align(init_guess);  // ndt_gpu库的align,不传出配准后的点云
+    anh_gpu_ndt.align(init_guess);  // ndt_gpu库的align,不传出配准后的点云 ---用法同cpu_ndt
     fitness_score = anh_gpu_ndt.getFitnessScore();
     t_localizer = anh_gpu_ndt.getFinalTransformation();
     has_converged = anh_gpu_ndt.hasConverged();
@@ -696,7 +696,7 @@ static void points_callback(const sensor_msgs::PointCloud2::ConstPtr& input)
 #ifdef USE_PCL_OPENMP
   else if (_method_type == MethodType::PCL_OPENMP)
   {
-    omp_ndt.align(*output_cloud, init_guess);
+    omp_ndt.align(*output_cloud, init_guess);   // omp_ndt.align用法同pcl::ndt
     fitness_score = omp_ndt.getFitnessScore();
     t_localizer = omp_ndt.getFinalTransformation();
     has_converged = omp_ndt.hasConverged();

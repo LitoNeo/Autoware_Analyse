@@ -35,10 +35,10 @@
  */
 
 #include <pthread.h>
-#include <chrono>
+#include <chrono>  // 比time更加强大的time library,包括duration,time_point等
 #include <fstream>
 #include <iostream>
-#include <memory>
+#include <memory>  // 内存池
 #include <sstream>
 #include <string>
 
@@ -106,9 +106,13 @@ enum class MethodType
 };
 static MethodType _method_type = MethodType::PCL_GENERIC;
 
-static pose initial_pose, predict_pose, predict_pose_imu, predict_pose_odom, predict_pose_imu_odom, previous_pose,
-    ndt_pose, current_pose, current_pose_imu, current_pose_odom, current_pose_imu_odom, localizer_pose;
-
+// 定义位置
+static pose initial_pose
+static pose predict_pose, predict_pose_imu, predict_pose_odom, predict_pose_imu_odom
+static pose previous_pose, ndt_pose
+static pose current_pose, current_pose_imu, current_pose_odom, current_pose_imu_odom
+static pose localizer_pose; // 
+// 定义偏移量
 static double offset_x, offset_y, offset_z, offset_yaw;  // current_pos - previous_pose
 static double offset_imu_x, offset_imu_y, offset_imu_z, offset_imu_roll, offset_imu_pitch, offset_imu_yaw;
 static double offset_odom_x, offset_odom_y, offset_odom_z, offset_odom_roll, offset_odom_pitch, offset_odom_yaw;
@@ -116,6 +120,7 @@ static double offset_imu_odom_x, offset_imu_odom_y, offset_imu_odom_z, offset_im
     offset_imu_odom_yaw;
 
 // Can't load if typed "pcl::PointCloud<pcl::PointXYZRGB> map, add;"
+// 定义两张地图map和add
 static pcl::PointCloud<pcl::PointXYZ> map, add;
 
 // If the map is loaded, map_loaded will be 1.
@@ -124,21 +129,26 @@ static int _use_gnss = 1;
 static int init_pos_set = 0;
 
 static pcl::NormalDistributionsTransform<pcl::PointXYZ, pcl::PointXYZ> ndt;
-static cpu::NormalDistributionsTransform<pcl::PointXYZ, pcl::PointXYZ> anh_ndt;
-#ifdef CUDA_FOUND
+static cpu::NormalDistributionsTransform<pcl::PointXYZ, pcl::PointXYZ> anh_ndt;  // cpu_ndt可以直接使用吗??
+
+// #################### 定义gpu_ndt为何要用shared_ptr???
+#ifdef CUDA_FOUND  
 static std::shared_ptr<gpu::GNormalDistributionsTransform> anh_gpu_ndt_ptr =
     std::make_shared<gpu::GNormalDistributionsTransform>();
 #endif
+// ##############################
+
 #ifdef USE_PCL_OPENMP
 static pcl_omp::NormalDistributionsTransform<pcl::PointXYZ, pcl::PointXYZ> omp_ndt;
 #endif
 
-// Default values
+// Default values // 
 static int max_iter = 30;        // Maximum iterations
 static float ndt_res = 1.0;      // Resolution
 static double step_size = 0.1;   // Step size
 static double trans_eps = 0.01;  // Transformation epsilon
 
+// 以下: 定义各种发布函数
 static ros::Publisher predict_pose_pub;
 static geometry_msgs::PoseStamped predict_pose_msg;
 
@@ -151,7 +161,7 @@ static geometry_msgs::PoseStamped predict_pose_odom_msg;
 static ros::Publisher predict_pose_imu_odom_pub;
 static geometry_msgs::PoseStamped predict_pose_imu_odom_msg;
 
-static ros::Publisher ndt_pose_pub;
+static ros::Publisher ndt_pose_pub;  // ndt_pose
 static geometry_msgs::PoseStamped ndt_pose_msg;
 
 // current_pose is published by vel_pose_mux
@@ -160,15 +170,17 @@ static ros::Publisher current_pose_pub;
 static geometry_msgs::PoseStamped current_pose_msg;
 */
 
+// localizer_pose是指的局部地图的位置吧??
 static ros::Publisher localizer_pose_pub;
 static geometry_msgs::PoseStamped localizer_pose_msg;
 
 static ros::Publisher estimate_twist_pub;
 static geometry_msgs::TwistStamped estimate_twist_msg;
+//
 
-static ros::Duration scan_duration;
+static ros::Duration scan_duration;  // 点云扫描间隔duration
 
-static double exe_time = 0.0;
+static double exe_time = 0.0;  // 记录执行时间
 static bool has_converged;
 static int iteration = 0;
 static double fitness_score = 0.0;
@@ -177,53 +189,65 @@ static double trans_probability = 0.0;
 static double diff = 0.0;
 static double diff_x = 0.0, diff_y = 0.0, diff_z = 0.0, diff_yaw;
 
-static double current_velocity = 0.0, previous_velocity = 0.0, previous_previous_velocity = 0.0;  // [m/s]
+static double current_velocity = 0.0, previous_velocity = 0.0, previous_previous_velocity = 0.0;  // [m/s]  // 记录三个速度
 static double current_velocity_x = 0.0, previous_velocity_x = 0.0;
 static double current_velocity_y = 0.0, previous_velocity_y = 0.0;
 static double current_velocity_z = 0.0, previous_velocity_z = 0.0;
 // static double current_velocity_yaw = 0.0, previous_velocity_yaw = 0.0;
-static double current_velocity_smooth = 0.0;
+static double current_velocity_smooth = 0.0;  // ???????
 
 static double current_velocity_imu_x = 0.0;
 static double current_velocity_imu_y = 0.0;
 static double current_velocity_imu_z = 0.0;
 
-static double current_accel = 0.0, previous_accel = 0.0;  // [m/s^2]
+static double current_accel = 0.0, previous_accel = 0.0;  // [m/s^2]  // 加速度
 static double current_accel_x = 0.0;
 static double current_accel_y = 0.0;
 static double current_accel_z = 0.0;
 // static double current_accel_yaw = 0.0;
 
-static double angular_velocity = 0.0;
+static double angular_velocity = 0.0;  // 角速度
 
-static int use_predict_pose = 0;
+static int use_predict_pose = 0;  // 指示器,是否使用predict_pose
 
+// 发布速度,包括预测到的m/s km/h 最后一个是啥?estimated_vel_pub 
 static ros::Publisher estimated_vel_mps_pub, estimated_vel_kmph_pub, estimated_vel_pub;
 static std_msgs::Float32 estimated_vel_mps, estimated_vel_kmph, previous_estimated_vel_kmph;
 
-static std::chrono::time_point<std::chrono::system_clock> matching_start, matching_end;
+static std::chrono::time_point<std::chrono::system_clock> matching_start, matching_end;  // 记录时刻点
 
-static ros::Publisher time_ndt_matching_pub;
+static ros::Publisher time_ndt_matching_pub;  // 发布ndt_matching的时刻点
 static std_msgs::Float32 time_ndt_matching;
 
 static int _queue_size = 1000;
 
 static ros::Publisher ndt_stat_pub;
 static autoware_msgs::NDTStat ndt_stat_msg;
+/*NDTStat  ndt状态信息
+Header header
+float32 exe_time
+int32 iteration
+float32 score  // 匹配分数
+float32 velocity
+float32 acceleration
+int32 use_predict_pose
 
-static double predict_pose_error = 0.0;
+*/
+
+static double predict_pose_error = 0.0;  // 定义预测误差
 
 static double _tf_x, _tf_y, _tf_z, _tf_roll, _tf_pitch, _tf_yaw;
 static Eigen::Matrix4f tf_btol;
 
+// 
 static std::string _localizer = "velodyne";
-static std::string _offset = "linear";  // linear, zero, quadratic
+static std::string _offset = "linear";  // linear, zero, quadratic  // ????????
 
-static ros::Publisher ndt_reliability_pub;
+static ros::Publisher ndt_reliability_pub; // 定义ndt可靠性,并发布 ==表示ndt结果的准确性=float32
 static std_msgs::Float32 ndt_reliability;
 
-static bool _get_height = false;
-static bool _use_local_transform = false;
+static bool _get_height = false;  // ?
+static bool _use_local_transform = false;  // ?
 static bool _use_imu = false;
 static bool _use_odom = false;
 static bool _imu_upside_down = false;
@@ -241,8 +265,9 @@ static tf::StampedTransform local_transform;
 
 static unsigned int points_map_num = 0;
 
-pthread_mutex_t mutex;
+pthread_mutex_t mutex;  // 多线程,锁
 
+// 根据接收到的ConfigNdt消息,设置参数
 static void param_callback(const autoware_config_msgs::ConfigNdt::ConstPtr& input)
 {
   if (_use_gnss != input->init_pos_gnss)
@@ -254,7 +279,7 @@ static void param_callback(const autoware_config_msgs::ConfigNdt::ConstPtr& inpu
             initial_pose.roll != input->roll || initial_pose.pitch != input->pitch || initial_pose.yaw != input->yaw))
   {
     init_pos_set = 0;
-  }
+  } // ???
 
   _use_gnss = input->init_pos_gnss;
 
@@ -331,7 +356,7 @@ static void param_callback(const autoware_config_msgs::ConfigNdt::ConstPtr& inpu
 #endif
   }
 
-  if (_use_gnss == 0 && init_pos_set == 0)
+  if (_use_gnss == 0 && init_pos_set == 0)  // 不使用gps,则将消息中的坐标位置直接赋值给initial_pose
   {
     initial_pose.x = input->x;
     initial_pose.y = input->y;
@@ -340,7 +365,7 @@ static void param_callback(const autoware_config_msgs::ConfigNdt::ConstPtr& inpu
     initial_pose.pitch = input->pitch;
     initial_pose.yaw = input->yaw;
 
-    if (_use_local_transform == true)
+    if (_use_local_transform == true)  // ????? ..................local_transform?
     {
       tf::Vector3 v(input->x, input->y, input->z);
       tf::Quaternion q;
@@ -399,10 +424,11 @@ static void param_callback(const autoware_config_msgs::ConfigNdt::ConstPtr& inpu
     current_velocity_imu_x = current_velocity_x;
     current_velocity_imu_y = current_velocity_y;
     current_velocity_imu_z = current_velocity_z;
-    init_pos_set = 1;
+    init_pos_set = 1;  // 完成初始位置设置
   }
 }
 
+// 并非是对每帧点云进行这样的处理,而只是对第一帧点云这样处理???  ---------待验证
 static void map_callback(const sensor_msgs::PointCloud2::ConstPtr& input)
 {
   // if (map_loaded == 0)
@@ -415,7 +441,7 @@ static void map_callback(const sensor_msgs::PointCloud2::ConstPtr& input)
     // Convert the data type(from sensor_msgs to pcl).
     pcl::fromROSMsg(*input, map);
 
-    if (_use_local_transform == true)
+    if (_use_local_transform == true)   /// ???
     {
       tf::TransformListener local_transform_listener;
       try
@@ -435,7 +461,7 @@ static void map_callback(const sensor_msgs::PointCloud2::ConstPtr& input)
     pcl::PointCloud<pcl::PointXYZ>::Ptr map_ptr(new pcl::PointCloud<pcl::PointXYZ>(map));
 
     // Setting point cloud to be aligned to.
-    if (_method_type == MethodType::PCL_GENERIC)
+    if (_method_type == MethodType::PCL_GENERIC)  // 为什么要先定义new_ndt,然后再赋给相应的ndt变换???
     {
       pcl::NormalDistributionsTransform<pcl::PointXYZ, pcl::PointXYZ> new_ndt;
       pcl::PointCloud<pcl::PointXYZ>::Ptr output_cloud(new pcl::PointCloud<pcl::PointXYZ>);
@@ -447,6 +473,7 @@ static void map_callback(const sensor_msgs::PointCloud2::ConstPtr& input)
 
       new_ndt.align(*output_cloud, Eigen::Matrix4f::Identity());
 
+      // 加锁
       pthread_mutex_lock(&mutex);
       ndt = new_ndt;
       pthread_mutex_unlock(&mutex);
@@ -460,9 +487,10 @@ static void map_callback(const sensor_msgs::PointCloud2::ConstPtr& input)
       new_anh_ndt.setStepSize(step_size);
       new_anh_ndt.setTransformationEpsilon(trans_eps);
 
+      // Cpu_ndt做matching的时候,为啥要传入一个多余的空的点??
       pcl::PointCloud<pcl::PointXYZ>::Ptr dummy_scan_ptr(new pcl::PointCloud<pcl::PointXYZ>());
       pcl::PointXYZ dummy_point;
-      dummy_scan_ptr->push_back(dummy_point);
+      dummy_scan_ptr->push_back(dummy_point);  // ????
       new_anh_ndt.setInputSource(dummy_scan_ptr);
 
       new_anh_ndt.align(Eigen::Matrix4f::Identity());
@@ -512,10 +540,11 @@ static void map_callback(const sensor_msgs::PointCloud2::ConstPtr& input)
       pthread_mutex_unlock(&mutex);
     }
 #endif
-    map_loaded = 1;
+    map_loaded = 1;  // 指示地图已经载入
   }
 }
 
+// 处理gps信息
 static void gnss_callback(const geometry_msgs::PoseStamped::ConstPtr& input)
 {
   tf::Quaternion gnss_q(input->pose.orientation.x, input->pose.orientation.y, input->pose.orientation.z,
@@ -580,6 +609,7 @@ static void gnss_callback(const geometry_msgs::PoseStamped::ConstPtr& input)
   previous_gnss_time = current_gnss_time;
 }
 
+// 初始位置处理callback
 static void initialpose_callback(const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& input)
 {
   tf::TransformListener listener;
@@ -677,6 +707,7 @@ static void initialpose_callback(const geometry_msgs::PoseWithCovarianceStamped:
   init_pos_set = 1;
 }
 
+// imu+odom处理计算
 static void imu_odom_calc(ros::Time current_time)
 {
   static ros::Time previous_time = current_time;
@@ -709,6 +740,7 @@ static void imu_odom_calc(ros::Time current_time)
   previous_time = current_time;
 }
 
+// 单纯odom处理计算
 static void odom_calc(ros::Time current_time)
 {
   static ros::Time previous_time = current_time;
@@ -741,6 +773,7 @@ static void odom_calc(ros::Time current_time)
   previous_time = current_time;
 }
 
+// 单纯imu处理计算
 static void imu_calc(ros::Time current_time)
 {
   static ros::Time previous_time = current_time;
@@ -898,6 +931,8 @@ static void imu_callback(const sensor_msgs::Imu::Ptr& input)
   previous_imu_yaw = imu_yaw;
 }
 
+// #####################################################
+// TODO:这才是真正的对每一帧点云进行处理
 static void points_callback(const sensor_msgs::PointCloud2::ConstPtr& input)
 {
   if (map_loaded == 1 && init_pos_set == 1)
@@ -925,6 +960,8 @@ static void points_callback(const sensor_msgs::PointCloud2::ConstPtr& input)
         getFitnessScore_end;
     static double align_time, getFitnessScore_time = 0.0;
 
+    // 加锁执行
+    // lock
     pthread_mutex_lock(&mutex);
 
     if (_method_type == MethodType::PCL_GENERIC)
@@ -941,6 +978,8 @@ static void points_callback(const sensor_msgs::PointCloud2::ConstPtr& input)
 #endif
 
     // Guess the initial gross estimation of the transformation
+    // 计算offset的方式不同,即是使用当前值*time,还是引入加速度以更加精确,还是直接另offset==0
+    // start1
     double diff_time = (current_scan_time - previous_scan_time).toSec();
 
     if (_offset == "linear")
@@ -964,7 +1003,11 @@ static void points_callback(const sensor_msgs::PointCloud2::ConstPtr& input)
       offset_z = 0.0;
       offset_yaw = 0.0;
     }
+    // end1
 
+    // PREDICT pose  -- 预测过程中会引入imu和odom数据
+    // 最终给ndt的是predict_pose_for_ndt
+    // start2
     predict_pose.x = previous_pose.x + offset_x;
     predict_pose.y = previous_pose.y + offset_y;
     predict_pose.z = previous_pose.z + offset_z;
@@ -988,12 +1031,14 @@ static void points_callback(const sensor_msgs::PointCloud2::ConstPtr& input)
       predict_pose_for_ndt = predict_pose_odom;
     else
       predict_pose_for_ndt = predict_pose;
-
+    // end2
+    // 将上面得到的predict_pose_for_ndt转化为 init_guess 
     Eigen::Translation3f init_translation(predict_pose_for_ndt.x, predict_pose_for_ndt.y, predict_pose_for_ndt.z);
     Eigen::AngleAxisf init_rotation_x(predict_pose_for_ndt.roll, Eigen::Vector3f::UnitX());
     Eigen::AngleAxisf init_rotation_y(predict_pose_for_ndt.pitch, Eigen::Vector3f::UnitY());
     Eigen::AngleAxisf init_rotation_z(predict_pose_for_ndt.yaw, Eigen::Vector3f::UnitZ());
-    Eigen::Matrix4f init_guess = (init_translation * init_rotation_z * init_rotation_y * init_rotation_x) * tf_btol;
+    Eigen::Matrix4f init_guess = (init_translation * init_rotation_z * init_rotation_y * init_rotation_x) * tf_btol; // 注意考虑初始坐标转换
+    // 思考:在matching的时候,直接使用globalMap,而不抽取localMap,因为给定init_guess后总会变换到初始点(初始点≠原点)
 
     pcl::PointCloud<pcl::PointXYZ>::Ptr output_cloud(new pcl::PointCloud<pcl::PointXYZ>);
 
@@ -1012,7 +1057,7 @@ static void points_callback(const sensor_msgs::PointCloud2::ConstPtr& input)
       fitness_score = ndt.getFitnessScore();
       getFitnessScore_end = std::chrono::system_clock::now();
 
-      trans_probability = ndt.getTransformationProbability();
+      trans_probability = ndt.getTransformationProbability();  // 获得准确度
     }
     else if (_method_type == MethodType::PCL_ANH)
     {
@@ -1031,7 +1076,7 @@ static void points_callback(const sensor_msgs::PointCloud2::ConstPtr& input)
 
       trans_probability = anh_ndt.getTransformationProbability();
     }
-#ifdef CUDA_FOUND
+#ifdef CUDA_FOUND  // 为何ndt_gpu需要shared_ptr,而其他的都不需要呢??**********************************>>>
     else if (_method_type == MethodType::PCL_ANH_GPU)
     {
       align_start = std::chrono::system_clock::now();
@@ -1071,13 +1116,16 @@ static void points_callback(const sensor_msgs::PointCloud2::ConstPtr& input)
 #endif
     align_time = std::chrono::duration_cast<std::chrono::microseconds>(align_end - align_start).count() / 1000.0;
 
-    t2 = t * tf_btol.inverse();
+    t2 = t * tf_btol.inverse();  // t2是最终的变换矩阵,==>>或说t2就是我们要的变换位置
+    // 注意t 是相对于<起始点>而言的,   t2将t转换到<globalMap>坐标系下,才是真正的位置/姿态
 
     getFitnessScore_time =
         std::chrono::duration_cast<std::chrono::microseconds>(getFitnessScore_end - getFitnessScore_start).count() /
         1000.0;
 
     pthread_mutex_unlock(&mutex);
+    // 解锁
+    // unlock
 
     tf::Matrix3x3 mat_l;  // localizer
     mat_l.setValue(static_cast<double>(t(0, 0)), static_cast<double>(t(0, 1)), static_cast<double>(t(0, 2)),
@@ -1591,7 +1639,7 @@ int main(int argc, char** argv)
   Eigen::AngleAxisf rot_x_btol(_tf_roll, Eigen::Vector3f::UnitX());  // rot: rotation
   Eigen::AngleAxisf rot_y_btol(_tf_pitch, Eigen::Vector3f::UnitY());
   Eigen::AngleAxisf rot_z_btol(_tf_yaw, Eigen::Vector3f::UnitZ());
-  tf_btol = (tl_btol * rot_z_btol * rot_y_btol * rot_x_btol).matrix();
+  tf_btol = (tl_btol * rot_z_btol * rot_y_btol * rot_x_btol).matrix();  // 定义初始位置变换矩阵
 
   // Updated in initialpose_callback or gnss_callback
   initial_pose.x = 0.0;
